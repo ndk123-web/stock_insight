@@ -1,0 +1,213 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock Insight - Real-Time Data & Prediction</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/regression@2.0.1/dist/regression.min.js"></script>
+  <link rel="icon" type="image/png/webp" href="{static 'logo.webp'}">
+  <style>
+    body {
+      text-align: center;
+      font-family: Arial, sans-serif;
+      background: #121212;
+      color: white;
+      margin: 0;
+      padding: 20px;
+    }
+    .input-container {
+      margin: 20px 0;
+    }
+    input, select {
+      padding: 10px;
+      font-size: 16px;
+      margin: 5px;
+    }
+    .button {
+      background: #ff9f40;
+      border: none;
+      padding: 10px 20px;
+      font-size: 16px;
+      color: white;
+      cursor: pointer;
+      border-radius: 5px;
+      margin: 5px;
+    }
+    .button:hover {
+      background: #ff7b20;
+    }
+    .charts-wrapper {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 20px;
+    }
+    .chart-container {
+      background: #1e1e1e;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 4px 10px rgba(255, 255, 255, 0.2);
+      flex: 1 1 300px;
+      max-width: 800px;
+    }
+    .metrics {
+      margin-top: 20px;
+      background: #1e1e1e;
+      padding: 15px;
+      border-radius: 10px;
+      display: inline-block;
+    }
+    .error-message {
+      color: red;
+      font-weight: bold;
+    }
+    canvas {
+      width: 100% !important;
+      height: 400px !important;
+    }
+  </style>
+</head>
+<body>
+  <h1>Stock Insight</h1>
+  <p>Real-Time Stock Data and Prediction using Polynomial Regression</p>
+
+  <div class="input-container">
+    <input type="text" id="stockSymbol" placeholder="Enter Stock Symbol" required />
+    <select id="regressionOrder">
+      <option value="1">Linear (1st order)</option>
+      <option value="2" selected>Quadratic (2nd order)</option>
+      <option value="3">Cubic (3rd order)</option>
+      <option value="4">Quartic (4th order)</option>
+    </select>
+    <button class="button" onclick="fetchStockData()">Get Stock Data & Predict</button>
+  </div>
+
+  <p id="errorBox" class="error-message"></p>
+
+  <div class="charts-wrapper">
+    <div class="chart-container">
+      <h2>Actual Stock Price</h2>
+      <canvas id="actualChart"></canvas>
+    </div>
+    <div class="chart-container">
+      <h2>Predicted Stock Price</h2>
+      <canvas id="predictionChart"></canvas>
+    </div>
+  </div>
+
+  <div class="metrics">
+    <h2>Model Performance</h2>
+    <p>RMSE: <span id="rmse"></span></p>
+  </div>
+
+  <script>
+    let actualChart, predictionChart;
+
+    async function fetchStockData() {
+      const symbol = document.getElementById("stockSymbol").value.toUpperCase();
+      const order = parseInt(document.getElementById("regressionOrder").value);
+      const errorBox = document.getElementById("errorBox");
+
+      errorBox.innerText = "";
+
+      if (!symbol) {
+        errorBox.innerText = "Please enter a stock symbol!";
+        return;
+      }
+
+      const url = `/get_stock/${symbol}/`;
+
+      try {
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.error) {
+          errorBox.innerText = "Error: " + data.error;
+          return;
+        }
+
+        const timestamps = data.timestamps;
+        const prices = data.prices;
+
+        updateActualChart(symbol, timestamps, prices);
+
+        const xData = prices.map((_, index) => index);
+        const regressionData = xData.map((x, i) => [x, prices[i]]);
+        const result = regression.polynomial(regressionData, { order: order });
+        const predictedPrices = xData.map(x => result.predict(x)[1]);
+
+        updatePredictionChart(symbol, timestamps, predictedPrices);
+        calculateMetrics(prices, predictedPrices);
+      } catch (error) {
+        errorBox.innerText = "Error fetching stock data!";
+      }
+    }
+
+    function updateActualChart(symbol, labels, data) {
+      const ctx = document.getElementById("actualChart").getContext("2d");
+      if (actualChart) actualChart.destroy();
+      actualChart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: labels,
+          datasets: [{
+            label: `Actual Stock Price (${symbol})`,
+            data: data,
+            borderColor: "#00ff00",
+            backgroundColor: "rgba(0, 255, 0, 0.2)",
+            borderWidth: 2,
+            tension: 0.3,
+            fill: true
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { ticks: { color: "white" } },
+            y: { ticks: { color: "white" }, beginAtZero: false }
+          }
+        }
+      });
+    }
+
+    function updatePredictionChart(symbol, labels, data) {
+      const ctx = document.getElementById("predictionChart").getContext("2d");
+      if (predictionChart) predictionChart.destroy();
+      predictionChart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: labels,
+          datasets: [{
+            label: `Predicted Stock Price (${symbol})`,
+            data: data,
+            borderColor: "#0000ff",
+            backgroundColor: "rgba(0, 0, 255, 0.2)",
+            borderWidth: 2,
+            tension: 0.3,
+            fill: true
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { ticks: { color: "white" } },
+            y: { ticks: { color: "white" }, beginAtZero: false }
+          }
+        }
+      });
+    }
+
+    function calculateMetrics(actual, predicted) {
+      let sumSquaredErrors = 0;
+      for (let i = 0; i < actual.length; i++) {
+        sumSquaredErrors += Math.pow(actual[i] - predicted[i], 2);
+      }
+      let rmse = Math.sqrt(sumSquaredErrors / actual.length);
+      document.getElementById("rmse").innerText = rmse.toFixed(4);
+    }
+  </script>
+</body>
+</html>
